@@ -57,6 +57,7 @@ _STATUS_CODE_TABLE = {
     "STOPPED": "Stopped",
     "STOPPING": "Stopping",
     "STARTING": "Starting",
+    "PENDING": "Pending",
 }
 
 
@@ -4343,6 +4344,29 @@ class Session(object):  # pylint: disable=too-many-public-methods
         """
         return create(request)
 
+    def wait_for_inference_recommendations_job(
+        self, job_name: str, poll: int = 120
+    ) -> Dict[str, Any]:
+        """Wait for an Amazon SageMaker Inference Recommender job to complete.
+
+        Args:
+            job_name (str): Name of the Inference Recommender job to wait for.
+            poll (int): Polling interval in seconds (default: 5).
+
+        Returns:
+            (dict): Return value from the ``DescribeInferenceRecommendationsJob`` API.
+
+        Raises:
+            exceptions.CapacityError: If the Inference Recommender job fails with CapacityError.
+            exceptions.UnexpectedStatusException: If the Inference Recommender job fails.
+        """
+        desc = _wait_until(
+            lambda: _describe_inference_recommendations_job_status(self.sagemaker_client, job_name),
+            poll,
+        )
+        self._check_job_status(job_name, desc, "Status")
+        return desc
+
 
 def get_model_package_args(
     content_types,
@@ -4955,6 +4979,30 @@ def _create_model_package_status(sagemaker_client, model_package_name):
     desc = sagemaker_client.describe_model_package(ModelPackageName=model_package_name)
     status = desc["ModelPackageStatus"]
     print(".", end="")
+    sys.stdout.flush()
+
+    if status in in_progress_statuses:
+        return None
+
+    print("")
+    return desc
+
+
+def _describe_inference_recommendations_job_status(sagemaker_client, job_name):
+    inference_recommendations_job_status_codes = {
+        "PENDING": ".",
+        "IN_PROGRESS": ".",
+        "COMPLETED": "!",
+        "FAILED": "*",
+        "STOPPING": "_",
+        "STOPPED": "s",
+    }
+    in_progress_statuses = ["PENDING", "IN_PROGRESS", "STOPPING"]
+
+    desc = sagemaker_client.describe_inference_recommendations_job(JobName=job_name)
+    status = desc["Status"]
+
+    print(inference_recommendations_job_status_codes.get(status, "?"), end="")
     sys.stdout.flush()
 
     if status in in_progress_statuses:
