@@ -23,7 +23,7 @@ from botocore.exceptions import ClientError
 from mock import ANY, MagicMock, Mock, patch, call, mock_open
 
 import sagemaker
-from sagemaker import TrainingInput, Session, get_execution_role
+from sagemaker import TrainingInput, Session, get_execution_role, exceptions
 from sagemaker.async_inference import AsyncInferenceConfig
 from sagemaker.session import (
     _tuning_job_status,
@@ -2725,3 +2725,41 @@ def test_wait_for_athena_query(query_execution, sagemaker_session):
     query_execution.return_value = {"QueryExecution": {"Status": {"State": "SUCCEEDED"}}}
     sagemaker_session.wait_for_athena_query(query_execution_id="query_id")
     assert query_execution.called_with(query_execution_id="query_id")
+
+
+@patch("time.sleep")
+def test_wait_for_inference_recommendations_job_completed(sleep, sagemaker_session):
+    inference_recommendations_desc_status_in_progress = {"Status": "IN_PROGRESS"}
+    inference_recommendations_desc_status_completed = {"Status": "COMPLETED"}
+
+    sagemaker_session.sagemaker_client.describe_inference_recommendations_job = Mock(
+        jobName="describe_inference_recommendations_job",
+        side_effect=[
+            inference_recommendations_desc_status_in_progress,
+            inference_recommendations_desc_status_completed,
+        ],
+    )
+
+    assert (
+        sagemaker_session.wait_for_inference_recommendations_job(JOB_NAME, 1)["Status"]
+        == "COMPLETED"
+    )
+    assert 2 == sagemaker_session.sagemaker_client.describe_inference_recommendations_job.call_count
+
+
+@patch("time.sleep")
+def test_wait_for_inference_recommendations_job_failed(sleep, sagemaker_session):
+    inference_recommendations_desc_status_failed = {
+        "Status": "FAILED",
+        "FailureReason": "Internal service error",
+    }
+
+    sagemaker_session.sagemaker_client.describe_inference_recommendations_job = Mock(
+        name="describe_inference_recommendations_job",
+        return_value=inference_recommendations_desc_status_failed,
+    )
+
+    with pytest.raises(exceptions.UnexpectedStatusException) as error:
+        sagemaker_session.wait_for_inference_recommendations_job(JOB_NAME, 1)
+
+    assert "Internal service error" in str(error)
