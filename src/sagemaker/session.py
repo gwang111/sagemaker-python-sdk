@@ -4343,6 +4343,115 @@ class Session(object):  # pylint: disable=too-many-public-methods
         """
         return create(request)
 
+    def _create_inference_recommendations_job_request(
+        self, 
+        role: str,
+        jobName: str,
+        jobDescription: str,
+        framework: str,
+        samplePayloadUrl: str,
+        supportedContentTypes: List[str],
+        modelPackageVersionArn: str,
+        jobType: str = "Default",
+        frameworkVersion: str = None,
+        nearestModelName: str = None,
+        supportedInstanceTypes: List[str] = None,
+        endpointConfigurations: List[Dict[str, Any]] = None,
+        trafficPattern: Dict[str, Any] = None,
+        stoppingConditions: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
+        containerConfig = {
+            "Domain": "MACHINE_LEARNING",
+            "Task": "OTHER",
+            "Framework": framework,
+            "PayloadConfig": {
+                "SamplePayloadUrl": samplePayloadUrl,
+                "SupportedContentTypes": supportedContentTypes
+            },
+        }
+
+        if frameworkVersion:
+            containerConfig["FrameworkVersion"] = frameworkVersion
+        if nearestModelName:
+            containerConfig["NearestModelName"] = nearestModelName
+        if supportedInstanceTypes:
+            containerConfig["SupportedInstanceTypes"] = supportedInstanceTypes
+
+        request = {
+            "JobName": jobName,
+            "JobType": jobType,
+            "RoleArn": role,
+            "InputConfig": {
+                "ContainerConfig": containerConfig,
+                "ModelPackageVersionArn": modelPackageVersionArn
+            }
+        }
+
+        if jobDescription:
+            request["JobDescription"] = jobDescription
+        
+        if "Advanced" == jobType:
+            if stoppingConditions:
+                request["StoppingConditions"] = stoppingConditions
+            if trafficPattern:
+                request["InputConfig"]["TrafficPattern"] = trafficPattern
+            if endpointConfigurations:
+                request["InputConfig"]["EndpointConfigurations"] = endpointConfigurations
+
+        return request
+
+    def create_inference_recommendation_job(
+        self, 
+        role: str,
+        framework: str,
+        samplePayloadUrl: str,
+        supportedContentTypes: List[str],
+        modelPackageVersionArn: str,
+        jobType: str = "Default",
+        frameworkVersion: str = None,
+        nearestModelName: str = None,
+        supportedInstanceTypes: List[str] = None,
+        endpointConfigurations: List[Dict[str, Any]] = None,
+        trafficPattern: Dict[str, Any] = None,
+        stoppingConditions: Dict[str, Any] = None
+    ):
+        jobName = "SM_PYTHON_SDK-" + str(round(time.time()))
+        jobDescription = "Inference Recommendations Job created with Python SDK"
+
+        create_inference_recommendations_job_request = self._create_inference_recommendations_job_request(
+            role=role,
+            modelPackageVersionArn=modelPackageVersionArn,
+            jobName=jobName,
+            jobType=jobType,
+            jobDescription=jobDescription,
+            framework=framework,
+            frameworkVersion=frameworkVersion,
+            nearestModelName=nearestModelName, 
+            samplePayloadUrl=samplePayloadUrl,
+            supportedContentTypes=supportedContentTypes,
+            supportedInstanceTypes=supportedInstanceTypes,
+            endpointConfigurations=endpointConfigurations,
+            trafficPattern=trafficPattern,
+            stoppingConditions=stoppingConditions  
+        )
+
+        def submit(request):
+            LOGGER.info("Creating Inference Recommendations job with name: %s", jobName)
+            try:
+                self.sagemaker_client.create_inference_recommendations_job(**request)
+            except ClientError as e:
+                error_code = e.response["Error"]["Code"]
+                message = e.response["Error"]["Message"]
+                if error_code == "ValidationException" and "already exists" in message:
+                    LOGGER.warning("Inference recommendations job %s already exists.", jobName)
+                else:
+                    raise
+
+        self._intercept_create_request(
+            create_inference_recommendations_job_request,
+            submit,
+            self.create_default_inference_recommendation.__name__
+        )
 
 def get_model_package_args(
     content_types,
