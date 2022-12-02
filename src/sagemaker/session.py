@@ -4404,55 +4404,59 @@ class Session(object):  # pylint: disable=too-many-public-methods
     def create_inference_recommendation_job(
         self, 
         role: str,
-        framework: str,
-        samplePayloadUrl: str,
-        supportedContentTypes: List[str],
-        modelPackageVersionArn: str,
-        jobType: str = "Default",
-        frameworkVersion: str = None,
-        nearestModelName: str = None,
-        supportedInstanceTypes: List[str] = None,
-        endpointConfigurations: List[Dict[str, Any]] = None,
-        trafficPattern: Dict[str, Any] = None,
-        stoppingConditions: Dict[str, Any] = None
+        sample_payload_url: str,
+        supported_content_types: List[str],
+        model_package_version_arn: str,
+        job_type: str = "Default",
+        job_duration: int = None,
+        nearest_model_name: str = None,
+        supported_instance_types: List[str] = None,
+        framework: str = None,
+        framework_version: str = None,
+        endpoint_configurations: List[Dict[str, any]] = None,
+        traffic_pattern: Dict[str, any] = None,
+        stopping_conditions: Dict[str, any] = None,
+        resource_limit: Dict[str, any] = None
     ):
-        jobName = "SM_PYTHON_SDK-" + str(round(time.time()))
-        jobDescription = "Inference Recommendations Job created with Python SDK"
+        job_name = "SMPYTHONSDK-" + str(round(time.time()))
+        job_description = "Inference Recommendations Job created with Python SDK"
 
         create_inference_recommendations_job_request = self._create_inference_recommendations_job_request(
             role=role,
-            modelPackageVersionArn=modelPackageVersionArn,
-            jobName=jobName,
-            jobType=jobType,
-            jobDescription=jobDescription,
+            model_package_version_arn=model_package_version_arn,
+            job_name=job_name,
+            job_type=job_type,
+            job_description=job_description,
             framework=framework,
-            frameworkVersion=frameworkVersion,
-            nearestModelName=nearestModelName, 
-            samplePayloadUrl=samplePayloadUrl,
-            supportedContentTypes=supportedContentTypes,
-            supportedInstanceTypes=supportedInstanceTypes,
-            endpointConfigurations=endpointConfigurations,
-            trafficPattern=trafficPattern,
-            stoppingConditions=stoppingConditions  
+            framework_version=framework_version,
+            nearest_model_name=nearest_model_name, 
+            sample_payload_url=sample_payload_url,
+            supported_content_types=supported_content_types,
+            supported_instance_types=supported_instance_types,
+            endpoint_configurations=endpoint_configurations,
+            trafficPattern=traffic_pattern,
+            stoppingConditions=stopping_conditions  
         )
 
         def submit(request):
-            LOGGER.info("Creating Inference Recommendations job with name: %s", jobName)
+            LOGGER.info("Creating Inference Recommendations job with name: %s", job_name)
             try:
                 self.sagemaker_client.create_inference_recommendations_job(**request)
             except ClientError as e:
                 error_code = e.response["Error"]["Code"]
                 message = e.response["Error"]["Message"]
                 if error_code == "ValidationException" and "already exists" in message:
-                    LOGGER.warning("Inference recommendations job %s already exists.", jobName)
+                    LOGGER.warning("Inference recommendations job %s already exists.", job_name)
                 else:
                     raise
 
         self._intercept_create_request(
             create_inference_recommendations_job_request,
             submit,
-            self.create_default_inference_recommendation.__name__
+            self.create_inference_recommendation_job.__name__
         )
+        return job_name
+
     def wait_for_inference_recommendations_job(
         self, job_name: str, poll: int = 120
     ) -> Dict[str, Any]:
