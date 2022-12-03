@@ -4347,57 +4347,63 @@ class Session(object):  # pylint: disable=too-many-public-methods
     def _create_inference_recommendations_job_request(
         self, 
         role: str,
-        jobName: str,
-        jobDescription: str,
+        job_name: str,
+        job_description: str,
         framework: str,
-        samplePayloadUrl: str,
-        supportedContentTypes: List[str],
-        modelPackageVersionArn: str,
-        jobType: str = "Default",
-        frameworkVersion: str = None,
-        nearestModelName: str = None,
-        supportedInstanceTypes: List[str] = None,
-        endpointConfigurations: List[Dict[str, Any]] = None,
-        trafficPattern: Dict[str, Any] = None,
-        stoppingConditions: Dict[str, Any] = None
+        sample_payload_url: str,
+        supported_content_types: List[str],
+        model_package_version_arn: str,
+        job_duration_in_seconds: int = None,
+        job_type: str = "Default",
+        framework_version: str = None,
+        nearest_model_name: str = None,
+        supported_instance_types: List[str] = None,
+        endpoint_configurations: List[Dict[str, Any]] = None,
+        traffic_pattern: Dict[str, Any] = None,
+        stopping_conditions: Dict[str, Any] = None,
+        resource_limit: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         containerConfig = {
             "Domain": "MACHINE_LEARNING",
             "Task": "OTHER",
             "Framework": framework,
             "PayloadConfig": {
-                "SamplePayloadUrl": samplePayloadUrl,
-                "SupportedContentTypes": supportedContentTypes
+                "SamplePayloadUrl": sample_payload_url,
+                "SupportedContentTypes": supported_content_types
             },
         }
 
-        if frameworkVersion:
-            containerConfig["FrameworkVersion"] = frameworkVersion
-        if nearestModelName:
-            containerConfig["NearestModelName"] = nearestModelName
-        if supportedInstanceTypes:
-            containerConfig["SupportedInstanceTypes"] = supportedInstanceTypes
+        if framework_version:
+            containerConfig["FrameworkVersion"] = framework_version
+        if nearest_model_name:
+            containerConfig["NearestModelName"] = nearest_model_name
+        if supported_instance_types:
+            containerConfig["SupportedInstanceTypes"] = supported_instance_types
 
         request = {
-            "JobName": jobName,
-            "JobType": jobType,
+            "JobName": job_name,
+            "JobType": job_type,
             "RoleArn": role,
             "InputConfig": {
                 "ContainerConfig": containerConfig,
-                "ModelPackageVersionArn": modelPackageVersionArn
+                "ModelPackageVersionArn": model_package_version_arn
             }
         }
 
-        if jobDescription:
-            request["JobDescription"] = jobDescription
+        if job_description:
+            request["JobDescription"] = job_description
+        if job_duration_in_seconds:
+            request["InputConfig"]["JobDurationInSeconds"] = job_duration_in_seconds
         
-        if "Advanced" == jobType:
-            if stoppingConditions:
-                request["StoppingConditions"] = stoppingConditions
-            if trafficPattern:
-                request["InputConfig"]["TrafficPattern"] = trafficPattern
-            if endpointConfigurations:
-                request["InputConfig"]["EndpointConfigurations"] = endpointConfigurations
+        if "Advanced" == job_type:
+            if stopping_conditions:
+                request["StoppingConditions"] = stopping_conditions
+            if resource_limit:
+                request["InputConfig"]["ResourceLimit"] = resource_limit
+            if traffic_pattern:
+                request["InputConfig"]["TrafficPattern"] = traffic_pattern
+            if endpoint_configurations:
+                request["InputConfig"]["EndpointConfigurations"] = endpoint_configurations
 
         return request
 
@@ -4408,7 +4414,7 @@ class Session(object):  # pylint: disable=too-many-public-methods
         supported_content_types: List[str],
         model_package_version_arn: str,
         job_type: str = "Default",
-        job_duration: int = None,
+        job_duration_in_seconds: int = None,
         nearest_model_name: str = None,
         supported_instance_types: List[str] = None,
         framework: str = None,
@@ -4426,6 +4432,7 @@ class Session(object):  # pylint: disable=too-many-public-methods
             model_package_version_arn=model_package_version_arn,
             job_name=job_name,
             job_type=job_type,
+            job_duration_in_seconds=job_duration_in_seconds,
             job_description=job_description,
             framework=framework,
             framework_version=framework_version,
@@ -4434,8 +4441,9 @@ class Session(object):  # pylint: disable=too-many-public-methods
             supported_content_types=supported_content_types,
             supported_instance_types=supported_instance_types,
             endpoint_configurations=endpoint_configurations,
-            trafficPattern=traffic_pattern,
-            stoppingConditions=stopping_conditions  
+            traffic_pattern=traffic_pattern,
+            stopping_conditions=stopping_conditions,
+            resource_limit=resource_limit
         )
 
         def submit(request):
