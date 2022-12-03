@@ -430,6 +430,65 @@ class Model(ModelBase):
             model_package_arn=model_package.get("ModelPackageArn"),
         )
 
+    def right_size(
+        self,
+        sample_payload_url: str,
+        supported_content_types: List[str],
+        job_type: Optional[str] = "Default",
+        job_duration_in_seconds: int = None,
+        nearest_model_name: Optional[str] = None,
+        supported_instance_types: Optional[List[str]] = None,
+        framework: Optional[str] = None,
+        framework_version: Optional[str] = None,
+        endpoint_configurations: List[Dict[str, any]] = None,
+        traffic_pattern: Dict[str, any] = None,
+        stopping_conditions: Dict[str, any] = None,
+        resource_limit: Dict[str, any] = None
+    ):
+        if self.model_package_arn is None:
+            raise ValueError(
+                "SageMaker Inference Recommender cannot generate instance recommendations without registering a model first")
+
+        framework_mapping = {
+            "xgboost": "XGBOOST",
+            "sklearn": "SAGEMAKER-SCIKIT-LEARN",
+            "pytorch": "PYTORCH",
+            "tensorflow": "TENSORFLOW",
+            "mxnet": "MXNET"
+        }
+
+        if not framework and self._framework():
+            framework = framework_mapping.get(self._framework, framework)
+
+        if not framework_version:
+            framework_version = self._get_framework_version()
+        
+        self._init_sagemaker_session_if_does_not_exist()
+
+        job_name = self.sagemaker_session.create_inference_recommendation_job(
+            role=self.role,
+            job_type=job_type,
+            job_duration_in_seconds=job_duration_in_seconds,
+            model_package_version_arn=self.model_package_arn,
+            framework=framework,
+            framework_version=framework_version,
+            nearest_model_name=nearest_model_name,
+            sample_payload_url=sample_payload_url,
+            supported_content_types=supported_content_types,
+            supported_instance_types=supported_instance_types,
+            endpoint_configurations=endpoint_configurations,
+            traffic_pattern=traffic_pattern,
+            stopping_conditions=stopping_conditions,
+            resource_limit=resource_limit
+        )
+        inference_recommender_job_results = self.sagemaker_session.wait_for_inference_recommendations_job(job_name)
+        
+        return InferenceRecommendations(
+                role=self.role,
+                model_data=self.model_data,
+                inference_recommender_job_results=inference_recommender_job_results,
+            )
+
     @runnable_by_pipeline
     def create(
         self,
@@ -1618,3 +1677,68 @@ class ModelPackage(Model):
         """Set the base name if there is no model name provided."""
         if self.name is None:
             self._base_name = base_name
+
+class InferenceRecommendations(Model):
+    def __init_(
+        self, 
+        role: str,
+        inference_recommender_job_results: Dict[str, any],
+        model_data: Optional[str] = None, 
+        **kwargs
+    ):
+        super(InferenceRecommendations, self).__init__(
+            role=role, model_data=model_data, **kwargs
+        )
+        self.inference_recommender_job_results = inference_recommender_job_results
+        self.inference_recommendations = self.inference_recommender_job_results["InferenceRecommendations"]
+        self.weight_mapping = {
+            "Default": 1,
+            "Medium": 2,
+            "High": 3,
+        }
+
+    def get_top_recommendation(
+        self,
+        max_cost: str = "Default",
+        max_latency: str = "Default",
+        max_invocations: str = "Default",
+    ) -> Dict[str, any]:
+        if not self.weight_mapping[max_cost] \
+            or not self.weight_mapping[max_latency] \
+            or not self.weight_mapping[max_invocations]:
+            raise ValueError("...")
+
+        if self.cost_weight == self.weight_mapping[max_cost] and \
+            self.latencey_weight == self.weight_mapping[max_latency] and \
+            self.invocation_weight == self.weight_mapping[max_invocations]:
+            return self.inference_recommendations[0]
+        else:
+            self.cost_weight=self.weight_mapping[max_cost],
+            self.latencey_weight=self.weight_mapping[max_latency],
+            self.invocation_weight=self.weight_mapping[max_invocations]
+
+        for recommendation in self.inference_recommendations:
+            recommendation["RelevanceScore"] = self._weighted_recommendation_score(
+                metrics=recommendation["Metrics"]
+            )
+
+        self.inference_recommendations = self.inference_recommendations.sort(key=self._sort_by_relevance)
+        
+        return self.inference_recommendations[0]
+    
+    def _weighted_recommendation_score(
+        self,
+        metrics: Dict[str, any],
+    ) -> float:
+        weighted_cost = float(metrics["CostPerHour"]) ** self.cost_weight
+        weighted_latency = float(metrics["ModelLatency"]) ** self.latency_weight
+        weighted_invocations = float(metrics["MaxInvocations"]) ** self.invocation_weight
+
+        return weighted_invocations / (weighted_cost * weighted_latency)
+    
+    def _sort_by_relevance(self, recommendation):
+        return recommendation["RelevanceScore"] * -1
+
+    def deploy(self, **kwargs):
+        top_recommendation = self.get_top_recommendation()
+        Model.deploy(self, instance_type=top_recommendation["EndpointConfiguration"]["InstanceType"], **kwargs)
