@@ -29,7 +29,7 @@ from sagemaker.experiments._api_types import (
     _TrialComponentStatusType,
     TrialComponentSearchResult,
 )
-from sagemaker.experiments.experiment import _Experiment
+from sagemaker.experiments.experiment import Experiment
 from sagemaker.experiments.run import (
     TRIAL_NAME_TEMPLATE,
     MAX_RUN_TC_ARTIFACTS_LEN,
@@ -48,6 +48,7 @@ from tests.unit.sagemaker.experiments.helpers import (
     mock_trial_load_or_create_func,
     mock_tc_load_or_create_func,
     TEST_EXP_NAME,
+    TEST_EXP_NAME_MIXED_CASE,
     TEST_RUN_NAME,
     TEST_EXP_DISPLAY_NAME,
     TEST_RUN_DISPLAY_NAME,
@@ -55,8 +56,8 @@ from tests.unit.sagemaker.experiments.helpers import (
 
 
 @patch(
-    "sagemaker.experiments.run._Experiment._load_or_create",
-    MagicMock(return_value=_Experiment(experiment_name=TEST_EXP_NAME)),
+    "sagemaker.experiments.run.Experiment._load_or_create",
+    MagicMock(return_value=Experiment(experiment_name=TEST_EXP_NAME)),
 )
 @patch(
     "sagemaker.experiments.run._Trial._load_or_create",
@@ -125,8 +126,8 @@ def test_run_init_name_length_exceed_limit(sagemaker_session):
 
 @patch.object(_TrialComponent, "save", MagicMock(return_value=None))
 @patch(
-    "sagemaker.experiments.run._Experiment._load_or_create",
-    MagicMock(return_value=_Experiment(experiment_name=TEST_EXP_NAME)),
+    "sagemaker.experiments.run.Experiment._load_or_create",
+    MagicMock(return_value=Experiment(experiment_name=TEST_EXP_NAME)),
 )
 @patch(
     "sagemaker.experiments.run._Trial._load_or_create",
@@ -216,8 +217,8 @@ def test_run_load_no_run_name_and_not_in_train_job_but_no_obj_in_context(sagemak
 
 @patch.object(_TrialComponent, "save", MagicMock(return_value=None))
 @patch(
-    "sagemaker.experiments.run._Experiment._load_or_create",
-    MagicMock(return_value=_Experiment(experiment_name=TEST_EXP_NAME)),
+    "sagemaker.experiments.run.Experiment._load_or_create",
+    MagicMock(return_value=Experiment(experiment_name=TEST_EXP_NAME)),
 )
 @patch(
     "sagemaker.experiments.run._Trial._load_or_create",
@@ -262,8 +263,8 @@ def test_run_load_with_run_name_but_no_exp_name(sagemaker_session):
 
 
 @patch(
-    "sagemaker.experiments.run._Experiment._load_or_create",
-    MagicMock(return_value=_Experiment(experiment_name=TEST_EXP_NAME)),
+    "sagemaker.experiments.run.Experiment._load_or_create",
+    MagicMock(return_value=Experiment(experiment_name=TEST_EXP_NAME)),
 )
 @patch(
     "sagemaker.experiments.run._Trial._load_or_create",
@@ -303,8 +304,8 @@ def test_run_load_in_sm_processing_job(mock_run_env, sagemaker_session):
 
 
 @patch(
-    "sagemaker.experiments.run._Experiment._load_or_create",
-    MagicMock(return_value=_Experiment(experiment_name=TEST_EXP_NAME)),
+    "sagemaker.experiments.run.Experiment._load_or_create",
+    MagicMock(return_value=Experiment(experiment_name=TEST_EXP_NAME)),
 )
 @patch(
     "sagemaker.experiments.run._Trial._load_or_create",
@@ -344,8 +345,8 @@ def test_run_load_in_sm_transform_job(mock_run_env, sagemaker_session):
 
 
 @patch(
-    "sagemaker.experiments.run._Experiment._load_or_create",
-    MagicMock(return_value=_Experiment(experiment_name=TEST_EXP_NAME)),
+    "sagemaker.experiments.run.Experiment._load_or_create",
+    MagicMock(return_value=Experiment(experiment_name=TEST_EXP_NAME)),
 )
 @patch(
     "sagemaker.experiments.run._Trial._load_or_create",
@@ -743,8 +744,8 @@ def test_log_roc_curve_invalid_input(run_obj):
 
 
 @patch(
-    "sagemaker.experiments.run._Experiment._load_or_create",
-    MagicMock(return_value=_Experiment(experiment_name=TEST_EXP_NAME)),
+    "sagemaker.experiments.run.Experiment._load_or_create",
+    MagicMock(return_value=Experiment(experiment_name=TEST_EXP_NAME)),
 )
 @patch(
     "sagemaker.experiments.run._Trial._load_or_create",
@@ -779,7 +780,9 @@ def test_list(mock_tc_search, mock_tc_list, mock_tc_load, run_obj, sagemaker_ses
     ]
     mock_tc_list.return_value = [
         TrialComponentSummary(
-            trial_component_name=Run._generate_trial_component_name("A" + str(i), TEST_EXP_NAME),
+            trial_component_name=Run._generate_trial_component_name(
+                "A" + str(i), TEST_EXP_NAME_MIXED_CASE
+            ),
             trial_component_arn="b" + str(i),
             display_name="C" + str(i),
             source_arn="D" + str(i),
@@ -798,7 +801,7 @@ def test_list(mock_tc_search, mock_tc_list, mock_tc_load, run_obj, sagemaker_ses
         (
             _TrialComponent(
                 trial_component_name=Run._generate_trial_component_name(
-                    "a" + str(i), TEST_EXP_NAME
+                    "a" + str(i), TEST_EXP_NAME_MIXED_CASE
                 ),
                 trial_component_arn="b" + str(i),
                 display_name="C" + str(i),
@@ -818,14 +821,14 @@ def test_list(mock_tc_search, mock_tc_list, mock_tc_load, run_obj, sagemaker_ses
     ]
 
     run_list = list_runs(
-        experiment_name=TEST_EXP_NAME,
+        experiment_name=TEST_EXP_NAME_MIXED_CASE,
         sort_by=SortByType.CREATION_TIME,
         sort_order=SortOrderType.ASCENDING,
         sagemaker_session=sagemaker_session,
     )
 
     mock_tc_list.assert_called_once_with(
-        experiment_name=TEST_EXP_NAME,
+        experiment_name=TEST_EXP_NAME_MIXED_CASE,
         created_before=None,
         created_after=None,
         sort_by="CreationTime",
@@ -860,8 +863,8 @@ def test_list_empty(mock_tc_list, sagemaker_session):
 
 
 @patch(
-    "sagemaker.experiments.run._Experiment._load_or_create",
-    MagicMock(return_value=_Experiment(experiment_name=TEST_EXP_NAME)),
+    "sagemaker.experiments.run.Experiment._load_or_create",
+    MagicMock(return_value=Experiment(experiment_name=TEST_EXP_NAME)),
 )
 @patch(
     "sagemaker.experiments.run._Trial._load_or_create",

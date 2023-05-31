@@ -19,6 +19,7 @@ import time
 
 import pytest
 
+from tests.conftest import CUSTOM_S3_OBJECT_KEY_PREFIX
 from tests.integ.sagemaker.experiments.conftest import TAGS
 from sagemaker.experiments._api_types import _TrialComponentStatusType
 from sagemaker.experiments._utils import is_run_trial_component
@@ -134,11 +135,15 @@ def test_run_name_vs_trial_component_name_edge_cases(sagemaker_session, input_na
         ) as run1:
             assert not run1._experiment.tags
             assert not run1._trial.tags
-            is_run_tc = is_run_trial_component(
-                trial_component_name=run1._trial_component.trial_component_name,
-                sagemaker_session=sagemaker_session,
-            )
-            assert is_run_tc
+
+            def verify_is_run():
+                is_run_tc = is_run_trial_component(
+                    trial_component_name=run1._trial_component.trial_component_name,
+                    sagemaker_session=sagemaker_session,
+                )
+                assert is_run_tc
+
+            retry_with_backoff(verify_is_run, 4)
 
         with load_run(
             experiment_name=exp_name,
@@ -638,6 +643,38 @@ def test_list(run_obj, sagemaker_session):
     assert run_tcs[0].experiment_config == run_obj.experiment_config
 
 
+def test_list_twice(run_obj, sagemaker_session):
+    tc1 = _TrialComponent.create(
+        trial_component_name=f"non-run-tc1-{name()}",
+        sagemaker_session=sagemaker_session,
+    )
+    tc2 = _TrialComponent.create(
+        trial_component_name=f"non-run-tc2-{name()}",
+        sagemaker_session=sagemaker_session,
+        tags=TAGS,
+    )
+    run_obj._trial.add_trial_component(tc1)
+    run_obj._trial.add_trial_component(tc2)
+
+    run_tcs = list_runs(
+        experiment_name=run_obj.experiment_name, sagemaker_session=sagemaker_session
+    )
+    assert len(run_tcs) == 1
+    assert run_tcs[0].run_name == run_obj.run_name
+    assert run_tcs[0].experiment_name == run_obj.experiment_name
+    assert run_tcs[0].experiment_config == run_obj.experiment_config
+
+    # note the experiment name used by run_obj is already mixed case and so
+    # covers the mixed case experiment name double create issue
+    run_tcs_second_result = list_runs(
+        experiment_name=run_obj.experiment_name, sagemaker_session=sagemaker_session
+    )
+    assert len(run_tcs) == 1
+    assert run_tcs_second_result[0].run_name == run_obj.run_name
+    assert run_tcs_second_result[0].experiment_name == run_obj.experiment_name
+    assert run_tcs_second_result[0].experiment_config == run_obj.experiment_config
+
+
 def _generate_estimator(
     exp_name,
     sdk_tar,
@@ -718,7 +755,7 @@ def _check_run_from_local_end_result(sagemaker_session, tc, is_complete_log=True
     if not is_complete_log:
         return
 
-    s3_prefix = f"s3://{sagemaker_session.default_bucket()}/{_DEFAULT_ARTIFACT_PREFIX}"
+    s3_prefix = f"s3://{sagemaker_session.default_bucket()}/{CUSTOM_S3_OBJECT_KEY_PREFIX}/{_DEFAULT_ARTIFACT_PREFIX}"
     assert s3_prefix in tc.output_artifacts[file_artifact_name].value
     assert "text/plain" == tc.output_artifacts[file_artifact_name].media_type
     assert "s3://Output" == tc.output_artifacts[artifact_name].value

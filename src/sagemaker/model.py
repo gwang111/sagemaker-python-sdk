@@ -563,7 +563,11 @@ api/latest/reference/services/sagemaker.html#SageMaker.Client.add_tags>`_
                 artifact should be repackaged into a new S3 object. (default: False).
         """
         local_code = utils.get_config_value("local.local_code", self.sagemaker_session.config)
-        bucket = self.bucket or self.sagemaker_session.default_bucket()
+
+        bucket, key_prefix = s3.determine_bucket_and_prefix(
+            bucket=self.bucket, key_prefix=key_prefix, sagemaker_session=self.sagemaker_session
+        )
+
         if (self.sagemaker_session.local_mode and local_code) or self.entry_point is None:
             self.uploaded_code = None
         elif not repack:
@@ -611,6 +615,17 @@ api/latest/reference/services/sagemaker.html#SageMaker.Client.add_tags>`_
                 self.uploaded_code = fw_utils.UploadedCode(
                     s3_prefix=repacked_model_data, script_name=os.path.basename(self.entry_point)
                 )
+
+            LOGGER.info(
+                "Repacking model artifact (%s), script artifact "
+                "(%s), and dependencies (%s) "
+                "into single tar.gz file located at %s. "
+                "This may take some time depending on model size...",
+                self.model_data,
+                self.source_dir,
+                self.dependencies,
+                repacked_model_data,
+            )
 
             utils.repack_model(
                 inference_script=self.entry_point,
@@ -1322,14 +1337,22 @@ api/latest/reference/services/sagemaker.html#SageMaker.Client.add_tags>`_
         """Build default async inference config and return ``AsyncInferenceConfig``"""
         unique_folder = unique_name_from_base(self.name)
         if async_inference_config.output_path is None:
-            async_output_s3uri = "s3://{}/async-endpoint-outputs/{}".format(
-                self.sagemaker_session.default_bucket(), unique_folder
+            async_output_s3uri = s3.s3_path_join(
+                "s3://",
+                self.sagemaker_session.default_bucket(),
+                self.sagemaker_session.default_bucket_prefix,
+                "async-endpoint-outputs",
+                unique_folder,
             )
             async_inference_config.output_path = async_output_s3uri
 
         if async_inference_config.failure_path is None:
-            async_failure_s3uri = "s3://{}/async-endpoint-failures/{}".format(
-                self.sagemaker_session.default_bucket(), unique_folder
+            async_failure_s3uri = s3.s3_path_join(
+                "s3://",
+                self.sagemaker_session.default_bucket(),
+                self.sagemaker_session.default_bucket_prefix,
+                "async-endpoint-failures",
+                unique_folder,
             )
             async_inference_config.failure_path = async_failure_s3uri
 

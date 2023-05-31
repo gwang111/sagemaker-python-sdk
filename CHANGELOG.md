@@ -1,5 +1,131 @@
 # Changelog
 
+## v2.159.0 (2023-05-23)
+
+### Features
+
+ * Add TF Serving 2.12.1 images to the SM PySDK
+
+### Bug Fixes and Other Changes
+
+ * Update the list of extension packages pylint is allowed to load
+
+## v2.158.0 (2023-05-22)
+
+### Features
+
+ * Enable default role for Spark processors
+ * SDK Defaults - S3 Params for Session
+ * Bump up images for DJL transformers Neuronx DLCs
+
+### Bug Fixes and Other Changes
+
+ * Relax local-mode PyPI requirements on urllib3
+
+### Documentation Changes
+
+ * Fix Tensorflow and PyTorch supported version in HuggingFaceProcessor
+ * Update doc for model_server_workers param in PyTorchModel
+
+## v2.157.0 (2023-05-18)
+
+### Features
+
+ * Handle use case where endpoint is created outside of python …
+
+### Bug Fixes and Other Changes
+
+ * Make type annotation of UploadedCode consistent
+ * Add SELinux label to local docker volumes
+
+## v2.156.0 (2023-05-17)
+
+### Features
+
+ * Partition support for DJLModel using SM Training job
+ * Update run-notebook-test to consider skips failures
+
+### Bug Fixes and Other Changes
+
+ * Update apache airflow and update test requirements
+ * Perform integrity checks for remote function execution
+ * Add p2 instances to integ tests
+ * Fix typo in logging message within ir mixin
+ * double Run create on load_run
+ * Update dtype logic for huggingface backend for new containers
+
+### Documentation Changes
+
+ * Update container version for SKLearn
+ * Add description for parameters in TransformInput
+
+## v2.155.0 (2023-05-15)
+
+### Features
+
+ * Add support for SageMaker Serverless inference Provisioned Concurrency feature
+
+### Bug Fixes and Other Changes
+
+ * Revert "fix: make RemoteExecutor context manager non-blocking on pend…
+ * Add BOM to no No P2 Availability region list
+
+## v2.154.0 (2023-05-11)
+
+### Features
+
+ * Add integ tests for remote_function, auto_capture functionality
+ * jumpstart model estimator classes
+
+### Bug Fixes and Other Changes
+
+ * integs - pytorch transformer deps and add test retry
+ * adding .lower() so new Pandas dtypes will match the type lookup.
+ * Pass KMS value to create processing job
+
+## v2.153.0 (2023-05-09)
+
+### Features
+
+ * Support npz archives in NumpyDeserializer
+ * Add FasterTransformer DJL support
+ * support for Sample Weights for SageMaker Autopilot
+
+### Bug Fixes and Other Changes
+
+ * retry is_run assertion
+ * Avoid 'AttributeError' for endpoint_name, if deploy() is not yet called
+ * Fix LambdaStep Creation
+ * Fix error when instance_count>1 in remote_function
+ * Remove deprecated update_endpoint from deploy() args in TensorFlowModel
+ * Update DJL deepspeed and fastertransformer DLC image uris
+ * remote_function python version mismatch issue
+
+## v2.152.0 (2023-05-04)
+
+### Features
+
+ * add support for lineage visualization using pyvis
+ * Expose Experiment class publicly
+ * PyTorch 1.13 release
+
+### Bug Fixes and Other Changes
+
+ * Change data_type argument to dtype to keep consistent with D…
+ * Skip edge test
+ * make RemoteExecutor context manager non-blocking on pending futures
+ * Add inferentia2 DLC images for djl framework
+ * Fix typo in using_pytorch.rst
+ * Unable to attach estimator to training job when KeepAlivePeriodInSeconds specified
+ * update LMI container image
+ * Update Clarify SHAPConfig baseline to allow JSON structures
+
+### Documentation Changes
+
+ * Fix broken link in DJL SageMaker docs
+ * currency update for the SageMaker data parallelism lib
+ * SM model parallel library v1.15.0 release note
+
 ## v2.151.0 (2023-04-27)
 
 ### Features

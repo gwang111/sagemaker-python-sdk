@@ -16,7 +16,7 @@ import pytest
 import random
 import string
 from mock import MagicMock, Mock, patch
-from sagemaker.experiments.experiment import _Experiment
+from sagemaker.experiments.experiment import Experiment
 from sagemaker.experiments.run import Run
 from sagemaker.experiments.trial import _Trial
 from sagemaker.experiments.trial_component import _TrialComponent
@@ -34,6 +34,7 @@ from tests.unit.sagemaker.experiments.helpers import (
 )
 
 KMS_KEY = "kms-key"
+HMAC_KEY = "some-hmac-key"
 
 mock_s3 = {}
 
@@ -75,19 +76,19 @@ def test_save_and_load(s3_source_dir_download, s3_source_dir_upload, args, kwarg
     s3_base_uri = random_s3_uri()
 
     stored_function = StoredFunction(
-        sagemaker_session=session, s3_base_uri=s3_base_uri, s3_kms_key=KMS_KEY
+        sagemaker_session=session, s3_base_uri=s3_base_uri, s3_kms_key=KMS_KEY, hmac_key=HMAC_KEY
     )
     stored_function.save(quadratic, *args, **kwargs)
     stored_function.load_and_invoke()
 
-    assert deserialize_obj_from_s3(session, s3_uri=f"{s3_base_uri}/results") == quadratic(
-        *args, **kwargs
-    )
+    assert deserialize_obj_from_s3(
+        session, s3_uri=f"{s3_base_uri}/results", hmac_key=HMAC_KEY
+    ) == quadratic(*args, **kwargs)
 
 
 @patch(
-    "sagemaker.experiments.run._Experiment._load_or_create",
-    MagicMock(return_value=_Experiment(experiment_name=TEST_EXP_NAME)),
+    "sagemaker.experiments.run.Experiment._load_or_create",
+    MagicMock(return_value=Experiment(experiment_name=TEST_EXP_NAME)),
 )
 @patch(
     "sagemaker.experiments.run._Trial._load_or_create",
@@ -117,7 +118,7 @@ def test_save_with_parameter_of_run_type(
         sagemaker_session=session,
     )
     stored_function = StoredFunction(
-        sagemaker_session=session, s3_base_uri=s3_base_uri, s3_kms_key=KMS_KEY
+        sagemaker_session=session, s3_base_uri=s3_base_uri, s3_kms_key=KMS_KEY, hmac_key=HMAC_KEY
     )
     with pytest.raises(SerializationError) as e:
         stored_function.save(log_bigger, 1, 2, run)

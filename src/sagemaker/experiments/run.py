@@ -32,7 +32,7 @@ from sagemaker.experiments._helper import (
 )
 from sagemaker.experiments._environment import _RunEnvironment
 from sagemaker.experiments._run_context import _RunContext
-from sagemaker.experiments.experiment import _Experiment
+from sagemaker.experiments.experiment import Experiment
 from sagemaker.experiments._metrics import _MetricsManager
 from sagemaker.experiments.trial import _Trial
 from sagemaker.experiments.trial_component import _TrialComponent
@@ -166,7 +166,7 @@ class Run(object):
         )
         self.run_group_name = Run._generate_trial_name(self.experiment_name)
 
-        self._experiment = _Experiment._load_or_create(
+        self._experiment = Experiment._load_or_create(
             experiment_name=self.experiment_name,
             display_name=experiment_display_name,
             tags=tags,
@@ -188,9 +188,7 @@ class Run(object):
         )
         if is_existed:
             logger.info(
-                "The run (%s) under experiment (%s) already exists. Loading it. "
-                "Note: sagemaker.experiments.load_run is recommended to use when "
-                "the desired run already exists.",
+                "The run (%s) under experiment (%s) already exists. Loading it.",
                 self.run_name,
                 self.experiment_name,
             )
@@ -633,7 +631,10 @@ class Run(object):
         Returns:
             str: The name of the Run object supplied by a user.
         """
-        return trial_component_name.replace("{}{}".format(experiment_name, DELIMITER), "", 1)
+        # TODO: we should revert the lower casting once backend fix reaches prod
+        return trial_component_name.replace(
+            "{}{}".format(experiment_name.lower(), DELIMITER), "", 1
+        )
 
     @staticmethod
     def _append_run_tc_label_to_tags(tags: Optional[List[Dict[str, str]]] = None) -> list:
@@ -869,6 +870,8 @@ def list_runs(
     Returns:
         list: A list of ``Run`` objects.
     """
+
+    # all trial components retrieved by default
     tc_summaries = _TrialComponent.list(
         experiment_name=experiment_name,
         created_before=created_before,

@@ -20,17 +20,20 @@ import urllib.request
 from json import JSONDecodeError
 from urllib.error import HTTPError, URLError
 from enum import Enum
-from typing import Optional, Union, Dict, Any
+from typing import Optional, Union, Dict, Any, List
 
 import sagemaker
 from sagemaker import s3, Predictor, image_uris, fw_utils
 from sagemaker.deserializers import JSONDeserializer, BaseDeserializer
 from sagemaker.djl_inference import defaults
 from sagemaker.model import FrameworkModel
+from sagemaker.s3_utils import s3_path_join
 from sagemaker.serializers import JSONSerializer, BaseSerializer
 from sagemaker.session import Session
 from sagemaker.utils import _tmpdir, _create_or_update_code_dir
 from sagemaker.workflow.entities import PipelineVariable
+from sagemaker.estimator import Estimator
+from sagemaker.s3 import S3Uploader
 
 logger = logging.getLogger("sagemaker")
 
@@ -52,6 +55,7 @@ class DJLServingEngineEntryPointDefaults(Enum):
     DEEPSPEED = ("DeepSpeed", "djl_python.deepspeed")
     HUGGINGFACE_ACCELERATE = ("Python", "djl_python.huggingface")
     STABLE_DIFFUSION = ("DeepSpeed", "djl_python.stable-diffusion")
+    FASTER_TRANSFORMER = ("FasterTransformer", "djl_python.fastertransformer")
 
 
 class DJLPredictor(Predictor):
@@ -93,12 +97,14 @@ class DJLPredictor(Predictor):
 def _determine_engine_for_model(model_type: str, num_partitions: int, num_heads: int):
     """Placeholder docstring"""
 
-    # Tensor Parallelism with DeepSpeed is only possible if attention heads can be split evenly
+    # Tensor Parallelism is only possible if attention heads can be split evenly
     # across devices
     if num_heads is not None and num_partitions is not None and num_heads % num_partitions:
         return HuggingFaceAccelerateModel
     if model_type in defaults.DEEPSPEED_RECOMMENDED_ARCHITECTURES:
         return DeepSpeedModel
+    if model_type in defaults.FASTER_TRANSFORMER_RECOMMENDED_ARCHITECTURES:
+        return FasterTransformerModel
     return HuggingFaceAccelerateModel
 
 
@@ -106,16 +112,18 @@ def _validate_engine_for_model_type(cls, model_type: str, num_partitions: int, n
     """Placeholder docstring"""
 
     if cls == DeepSpeedModel:
-        if model_type not in defaults.DEEPSPEED_SUPPORTED_ARCHITECTURES:
-            raise ValueError(
-                f"{model_type} is not supported by DeepSpeed. "
-                f"Supported model_types are {defaults.DEEPSPEED_SUPPORTED_ARCHITECTURES}"
-            )
         if num_heads is not None and num_partitions is not None and num_heads % num_partitions:
             raise ValueError(
                 "The number of attention heads is not evenly divisible by the number of partitions."
                 "Please set the number of partitions such that the number of attention heads can be"
                 "evenly split across the partitions."
+            )
+    if cls == FasterTransformerModel:
+        if model_type not in defaults.FASTER_TRANSFORMER_SUPPORTED_ARCHITECTURES:
+            raise ValueError(
+                f"The model architecture {model_type} is currently not supported by "
+                f"FasterTransformer. Please use a different engine, or use the DJLModel"
+                f"to let SageMaker pick a recommended engine for this model."
             )
     return cls
 
@@ -182,6 +190,53 @@ def _get_model_config_properties_from_hf(model_id: str):
     return model_config
 
 
+def _create_estimator(
+    instance_type: str,
+    s3_output_uri: str,
+    image_uri: str,
+    role: str,
+    sagemaker_session: Optional[Session],
+    volume_size: int = 30,
+    vpc_config: Optional[
+        Dict[
+            str,
+            List[
+                str,
+            ],
+        ]
+    ] = None,
+    volume_kms_key=None,
+    output_kms_key=None,
+    use_spot_instances: bool = False,
+    max_wait: int = None,
+    enable_network_isolation: bool = False,
+):
+    """Placeholder docstring"""
+
+    subnets = None
+    security_group_ids = None
+    if vpc_config:
+        subnets = vpc_config.get("Subnets")
+        security_group_ids = vpc_config.get("SecurityGroupIds")
+
+    return Estimator(
+        image_uri=image_uri,
+        role=role,
+        instance_count=1,
+        instance_type=instance_type,
+        volume_size=volume_size,
+        volume_kms_key=volume_kms_key,
+        output_path=s3_output_uri,
+        output_kms_key=output_kms_key,
+        sagemaker_session=sagemaker_session,
+        subnets=subnets,
+        security_group_ids=security_group_ids,
+        use_spot_instances=use_spot_instances,
+        max_wait=max_wait,
+        enable_network_isolation=enable_network_isolation,
+    )
+
+
 class DJLModel(FrameworkModel):
     """A DJL SageMaker ``Model`` that can be deployed to a SageMaker ``Endpoint``."""
 
@@ -223,6 +278,8 @@ class DJLModel(FrameworkModel):
             instance.engine = DJLServingEngineEntryPointDefaults.STABLE_DIFFUSION
         elif isinstance(instance, DeepSpeedModel):
             instance.engine = DJLServingEngineEntryPointDefaults.DEEPSPEED
+        elif isinstance(instance, FasterTransformerModel):
+            instance.engine = DJLServingEngineEntryPointDefaults.FASTER_TRANSFORMER
         else:
             instance.engine = DJLServingEngineEntryPointDefaults.HUGGINGFACE_ACCELERATE
         return instance
@@ -344,6 +401,7 @@ class DJLModel(FrameworkModel):
         self.model_loading_timeout = model_loading_timeout
         self.prediction_timeout = prediction_timeout
         self.sagemaker_session = self.sagemaker_session or Session()
+        self.save_mp_checkpoint_path = None
 
     def package_for_edge(self, **_):
         """Not implemented.
@@ -390,6 +448,99 @@ class DJLModel(FrameworkModel):
         raise NotImplementedError(
             "DJLModels do not currently support Inference Recommendation Jobs"
         )
+
+    def partition(
+        self,
+        instance_type: str,
+        s3_output_uri: str = None,
+        job_name: Optional[str] = None,
+        volume_kms_key: Optional[str] = None,
+        output_kms_key: Optional[str] = None,
+        use_spot_instances: bool = False,
+        max_wait: int = None,
+        enable_network_isolation: bool = False,
+    ):
+        """Partitions the model using SageMaker Training Job. This is a synchronous API call.
+
+        Args:
+            instance_type (str): The EC2 instance type to partition this Model.
+                    For example, 'ml.p4d.24xlarge'.
+            s3_output_uri (str): S3 location for saving the training result (model
+                    artifacts and output files). If not specified, results are
+                    stored to a default bucket. If the bucket with the specific name
+                    does not exist, it will be created.
+            job_name (str): Training job name. If not specified, a unique training job
+                        name will be created.
+            volume_kms_key (str): Optional. KMS key ID for encrypting EBS
+                volume attached to the training instance (default: None).
+            output_kms_key (str): Optional. KMS key ID for encrypting the
+                training output (default: None).
+            use_spot_instances (bool): Specifies whether to use SageMaker
+                Managed Spot instances for training. If enabled then the
+                ``max_wait`` arg should also be set.
+
+                More information:
+                https://docs.aws.amazon.com/sagemaker/latest/dg/model-managed-spot-training.html
+                (default: ``False``).
+            max_wait (int): Timeout in seconds waiting for spot training
+                job (default: None). After this amount of time Amazon
+                SageMaker will stop waiting for managed spot training job to
+                complete (default: None).
+            enable_network_isolation (bool): Specifies whether container will
+                run in network isolation mode (default: ``False``). Network
+                isolation mode restricts the container access to outside networks
+                (such as the Internet). The container does not make any inbound or
+                outbound network calls. Also known as Internet-free mode.
+        Returns:
+            None
+        """
+
+        if not self.image_uri:
+            region_name = self.sagemaker_session.boto_session.region_name
+            self.image_uri = self.serving_image_uri(region_name)
+
+        deploy_key_prefix = fw_utils.model_code_key_prefix(
+            self.key_prefix, self.name, self.image_uri
+        )
+        if s3_output_uri is None:
+            bucket, deploy_key_prefix = s3.determine_bucket_and_prefix(
+                bucket=self.bucket,
+                key_prefix=deploy_key_prefix,
+                sagemaker_session=self.sagemaker_session,
+            )
+            s3_output_uri = s3_path_join("s3://", bucket, deploy_key_prefix)
+        else:
+            s3_output_uri = s3_path_join(s3_output_uri, deploy_key_prefix)
+
+        self.save_mp_checkpoint_path = s3_path_join(s3_output_uri, "aot-partitioned-checkpoints")
+
+        container_def = self._upload_model_to_s3(upload_as_tar=False)
+        estimator = _create_estimator(
+            instance_type=instance_type,
+            s3_output_uri=s3_output_uri,
+            image_uri=self.image_uri,
+            role=self.role,
+            sagemaker_session=self.sagemaker_session,
+            vpc_config=self.vpc_config,
+            volume_kms_key=volume_kms_key,
+            output_kms_key=output_kms_key,
+            use_spot_instances=use_spot_instances,
+            max_wait=max_wait,
+            enable_network_isolation=enable_network_isolation,
+        )
+
+        # creates a training job to do partitions
+        estimator.fit(
+            inputs=container_def["ModelDataUrl"],
+            wait=True,
+            logs="All",
+            job_name=job_name,
+            experiment_config=None,
+        )
+
+        self.model_id = self.save_mp_checkpoint_path
+        # reset save_mp_checkpoint_path since partition is completed.
+        self.save_mp_checkpoint_path = None
 
     def deploy(
         self,
@@ -487,18 +638,8 @@ class DJLModel(FrameworkModel):
             container_startup_health_check_timeout=container_startup_health_check_timeout,
         )
 
-    def prepare_container_def(
-        self,
-        instance_type=None,
-        accelerator_type=None,
-        serverless_inference_config=None,
-    ):  # pylint: disable=unused-argument
-        """A container definition with framework configuration set in model environment variables.
-
-        Returns:
-            dict[str, str]: A container definition object usable with the
-            CreateModel API.
-        """
+    def _upload_model_to_s3(self, upload_as_tar: bool = True):
+        """Placeholder docstring"""
 
         if not self.image_uri:
             region_name = self.sagemaker_session.boto_session.region_name
@@ -537,19 +678,47 @@ class DJLModel(FrameworkModel):
             deploy_key_prefix = fw_utils.model_code_key_prefix(
                 self.key_prefix, self.name, self.image_uri
             )
-            bucket = self.bucket or self.sagemaker_session.default_bucket()
-            uploaded_code = fw_utils.tar_and_upload_dir(
-                self.sagemaker_session.boto_session,
-                bucket,
-                deploy_key_prefix,
-                self.entry_point,
-                directory=tmp_code_dir,
-                dependencies=self.dependencies,
-                kms_key=self.model_kms_key,
+            bucket, deploy_key_prefix = s3.determine_bucket_and_prefix(
+                bucket=self.bucket,
+                key_prefix=deploy_key_prefix,
+                sagemaker_session=self.sagemaker_session,
             )
+            if upload_as_tar:
+                uploaded_code = fw_utils.tar_and_upload_dir(
+                    self.sagemaker_session.boto_session,
+                    bucket,
+                    deploy_key_prefix,
+                    self.entry_point,
+                    directory=tmp_code_dir,
+                    dependencies=self.dependencies,
+                    kms_key=self.model_kms_key,
+                )
+                model_data_url = uploaded_code.s3_prefix
+            else:
+                model_data_url = S3Uploader.upload(
+                    tmp_code_dir,
+                    s3_path_join("s3://", bucket, deploy_key_prefix, "aot-model"),
+                    self.model_kms_key,
+                    self.sagemaker_session,
+                )
             return sagemaker.container_def(
-                self.image_uri, model_data_url=uploaded_code.s3_prefix, env=environment
+                self.image_uri, model_data_url=model_data_url, env=environment
             )
+
+    def prepare_container_def(
+        self,
+        instance_type=None,
+        accelerator_type=None,
+        serverless_inference_config=None,
+    ):  # pylint: disable=unused-argument
+        """A container definition with framework configuration set in model environment variables.
+
+        Returns:
+            dict[str, str]: A container definition object usable with the
+            CreateModel API.
+        """
+
+        return self._upload_model_to_s3(upload_as_tar=True)
 
     def generate_serving_properties(self, serving_properties=None) -> Dict[str, str]:
         """Generates the DJL Serving configuration to use for the model.
@@ -594,6 +763,8 @@ class DJLModel(FrameworkModel):
             serving_properties["option.model_loading_timeout"] = self.model_loading_timeout
         if self.prediction_timeout:
             serving_properties["option.prediction_timeout"] = self.prediction_timeout
+        if self.save_mp_checkpoint_path:
+            serving_properties["option.save_mp_checkpoint_path"] = self.save_mp_checkpoint_path
         return serving_properties
 
     def serving_image_uri(self, region_name):
@@ -606,7 +777,7 @@ class DJLModel(FrameworkModel):
             str: The appropriate image URI based on the given parameters.
         """
         if not self.djl_version:
-            self.djl_version = "0.21.0"
+            self.djl_version = "0.22.1"
 
         return image_uris.retrieve(
             self._framework(),
@@ -709,6 +880,8 @@ class DeepSpeedModel(DJLModel):
         self.enable_cuda_graph = enable_cuda_graph
         self.triangular_masking = triangular_masking
         self.return_tuple = return_tuple
+        self.save_mp_checkpoint_path = None
+        self.checkpoint = None
 
     def generate_serving_properties(self, serving_properties=None) -> Dict[str, Any]:
         """Generates the DJL Serving configuration to use for the model.
@@ -743,8 +916,71 @@ class DeepSpeedModel(DJLModel):
             serving_properties["option.triangular_masking"] = self.triangular_masking
         if self.return_tuple:
             serving_properties["option.return_tuple"] = self.return_tuple
+        if self.save_mp_checkpoint_path:
+            serving_properties["option.save_mp_checkpoint_path"] = self.save_mp_checkpoint_path
+        if self.checkpoint:
+            serving_properties["option.checkpoint"] = self.checkpoint
 
         return serving_properties
+
+    def partition(
+        self,
+        instance_type: str,
+        s3_output_uri: str = None,
+        job_name: Optional[str] = None,
+        volume_kms_key: Optional[str] = None,
+        output_kms_key: Optional[str] = None,
+        use_spot_instances: bool = False,
+        max_wait: int = None,
+        enable_network_isolation: bool = False,
+    ):
+        """Partitions the model using SageMaker Training Job. This is a synchronous API call.
+
+        Args:
+            instance_type (str): The EC2 instance type to partition this Model.
+                    For example, 'ml.p4d.24xlarge'.
+            s3_output_uri (str): S3 location for saving the training result (model
+                    artifacts and output files). If not specified, results are
+                    stored to a default bucket. If the bucket with the specific name
+                    does not exist, it will be created.
+            job_name (str): Training job name. If not specified, a unique training job
+                        name will be created.
+            volume_kms_key (str): Optional. KMS key ID for encrypting EBS
+                volume attached to the training instance (default: None).
+            output_kms_key (str): Optional. KMS key ID for encrypting the
+                training output (default: None).
+            use_spot_instances (bool): Specifies whether to use SageMaker
+                Managed Spot instances for training. If enabled then the
+                ``max_wait`` arg should also be set.
+
+                More information:
+                https://docs.aws.amazon.com/sagemaker/latest/dg/model-managed-spot-training.html
+                (default: ``False``).
+            max_wait (int): Timeout in seconds waiting for spot training
+                job (default: None). After this amount of time Amazon
+                SageMaker will stop waiting for managed spot training job to
+                complete (default: None).
+            enable_network_isolation (bool): Specifies whether container will
+                run in network isolation mode (default: ``False``). Network
+                isolation mode restricts the container access to outside networks
+                (such as the Internet). The container does not make any inbound or
+                outbound network calls. Also known as Internet-free mode.
+        Returns:
+            None
+        """
+
+        super(DeepSpeedModel, self).partition(
+            instance_type,
+            s3_output_uri,
+            job_name,
+            volume_kms_key=volume_kms_key,
+            output_kms_key=output_kms_key,
+            use_spot_instances=use_spot_instances,
+            max_wait=max_wait,
+            enable_network_isolation=enable_network_isolation,
+        )
+
+        self.checkpoint = "ds_inference_config.json"
 
 
 class HuggingFaceAccelerateModel(DJLModel):
@@ -847,12 +1083,126 @@ class HuggingFaceAccelerateModel(DJLModel):
         if self.low_cpu_mem_usage:
             serving_properties["option.low_cpu_mem_usage"] = self.low_cpu_mem_usage
         # This is a workaround due to a bug in our built in handler for huggingface
-        # TODO: This needs to be fixed when new dlc is published
+        # TODO: Remove this logic whenever 0.20.0 image is out of service
         if (
             serving_properties["option.entryPoint"] == "djl_python.huggingface"
             and self.dtype
             and self.dtype != "auto"
+            and self.djl_version
+            and int(self.djl_version.split(".")[1]) < 21
         ):
             serving_properties["option.dtype"] = "auto"
             serving_properties.pop("option.load_in_8bit", None)
         return serving_properties
+
+    def partition(
+        self,
+        instance_type: str,
+        s3_output_uri: str = None,
+        job_name: Optional[str] = None,
+        volume_kms_key: Optional[str] = None,
+        output_kms_key: Optional[str] = None,
+        use_spot_instances: bool = False,
+        max_wait: int = None,
+        enable_network_isolation: bool = False,
+    ):
+        """Partitions the model using SageMaker Training Job. This is a synchronous API call.
+
+        Args:
+            instance_type (str): The EC2 instance type to partition this Model.
+                    For example, 'ml.p4d.24xlarge'.
+            s3_output_uri (str): S3 location for saving the training result (model
+                    artifacts and output files). If not specified, results are
+                    stored to a default bucket. If the bucket with the specific name
+                    does not exist, it will be created.
+            job_name (str): Training job name. If not specified, a unique training job
+                        name will be created.
+            volume_kms_key (str): Optional. KMS key ID for encrypting EBS
+                volume attached to the training instance (default: None).
+            output_kms_key (str): Optional. KMS key ID for encrypting the
+                training output (default: None).
+            use_spot_instances (bool): Specifies whether to use SageMaker
+                Managed Spot instances for training. If enabled then the
+                ``max_wait`` arg should also be set.
+
+                More information:
+                https://docs.aws.amazon.com/sagemaker/latest/dg/model-managed-spot-training.html
+                (default: ``False``).
+            max_wait (int): Timeout in seconds waiting for spot training
+                job (default: None). After this amount of time Amazon
+                SageMaker will stop waiting for managed spot training job to
+                complete (default: None).
+            enable_network_isolation (bool): Specifies whether container will
+                run in network isolation mode (default: ``False``). Network
+                isolation mode restricts the container access to outside networks
+                (such as the Internet). The container does not make any inbound or
+                outbound network calls. Also known as Internet-free mode.
+        Returns:
+            None
+        """
+
+        logger.warning(
+            "HuggingFace engine does not currently support tensor parallelism. "
+            "Hence ahead of time partitioning is skipped"
+        )
+
+
+class FasterTransformerModel(DJLModel):
+    """A DJL FasterTransformer SageMaker ``Model``
+
+    This can be deployed to a SageMaker ``Endpoint``.
+    """
+
+    _framework_name = "djl-fastertransformer"
+
+    def __init__(
+        self,
+        model_id: str,
+        role: str,
+        tensor_parallel_degree: Optional[int] = None,
+        **kwargs,
+    ):
+        """Initialize a FasterTransformerModel.
+
+        Args:
+            model_id (str): This is either the HuggingFace Hub model_id, or the Amazon S3 location
+                containing the uncompressed model artifacts (i.e. not a tar.gz file).
+                The model artifacts are expected to be in HuggingFace pre-trained model
+                format (i.e. model should be loadable from the huggingface transformers
+                from_pretrained api, and should also include tokenizer configs if applicable).
+            role (str): An AWS IAM role specified with either the name or full ARN. The Amazon
+                SageMaker training jobs and APIs that create Amazon SageMaker
+                endpoints use this role to access model artifacts. After the endpoint is created,
+                the inference code
+                might use the IAM role, if it needs to access an AWS resource.
+            tensor_parllel_degree (int): The number of gpus to shard a single instance of the
+                 model across via tensor_parallelism. This should be set to greater than 1 if the
+                 size of the model is larger than the memory available on a single GPU on the
+                 instance. Defaults to None. If not set, no tensor parallel sharding is done.
+            **kwargs: Keyword arguments passed to the superclasses
+                :class:`~sagemaker.djl_inference.DJLModel`,
+                :class:`~sagemaker.model.FrameworkModel`, and
+                :class:`~sagemaker.model.Model`
+
+        .. tip::
+
+            You can find additional parameters for initializing this class at
+            :class:`~sagemaker.djl_inference.DJLModel`,
+            :class:`~sagemaker.model.FrameworkModel`, and
+            :class:`~sagemaker.model.Model`.
+        """
+
+        super(FasterTransformerModel, self).__init__(
+            model_id,
+            role,
+            **kwargs,
+        )
+        if self.number_of_partitions and tensor_parallel_degree:
+            logger.warning(
+                "Both number_of_partitions and tensor_parallel_degree have been set for "
+                "FasterTransformerModel."
+                "These mean the same thing for FasterTransformerModel. Please only set "
+                "tensor_parallel_degree."
+                "number_of_partitions will be ignored"
+            )
+        self.number_of_partitions = tensor_parallel_degree or self.number_of_partitions
