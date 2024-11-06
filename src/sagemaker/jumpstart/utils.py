@@ -191,7 +191,7 @@ def get_neo_content_bucket(
         and len(os.environ[constants.ENV_VARIABLE_NEO_CONTENT_BUCKET_OVERRIDE]) > 0
     ):
         bucket_to_return = os.environ[constants.ENV_VARIABLE_NEO_CONTENT_BUCKET_OVERRIDE]
-        info_log = f"Using Neo bucket override: '{bucket_to_return}'"
+        info_log = f"Using Compilation bucket override: '{bucket_to_return}'"
         constants.JUMPSTART_LOGGER.info(info_log)
     else:
         try:
@@ -812,7 +812,6 @@ def resolve_estimator_sagemaker_config_field(
     # JumpStart Estimators have certain default field values. We want
     # sagemaker config values to take priority over the model-specific defaults.
     if field_name == "enable_network_isolation":
-
         resolved_val = resolve_value_from_config(
             direct_input=None,
             config_path=TRAINING_JOB_ENABLE_NETWORK_ISOLATION_PATH,
@@ -823,7 +822,6 @@ def resolve_estimator_sagemaker_config_field(
         return resolved_val if resolved_val is not None else field_val
 
     if field_name == "encrypt_inter_container_traffic":
-
         resolved_val = resolve_value_from_config(
             direct_input=None,
             config_path=TRAINING_JOB_INTER_CONTAINER_ENCRYPTION_PATH,
